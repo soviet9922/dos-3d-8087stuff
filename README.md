@@ -1,35 +1,52 @@
-# FLIGHT87
+# STORM RUN (FLIGHT87)
 
-A flat-shaded 3D rail-shooter demo for the original IBM PC: **8088 + 8087 + CGA**.
-You fly a small delta-wing fighter low over a striped plain, weaving between
-spinning cubes, pyramids, pillars, octahedra and arches, and shoot them with lasers.
+A flat-shaded 3D rail shooter for the original IBM PC: **8088 + 8087 + CGA + PC speaker**.
 
-![demo](docs/demo.gif)
+You fly a delta-wing fighter low over a striped plain and through obstacle fields,
+pillar forests and a corridor of gates. Along the way you shoot down waves of
+enemy fighters, hovering gunships and ground turrets. The stage ends with a boss:
+a large armoured core flanked by two cannons.
 
-It is a single 10 KB `.COM` file written in NASM assembly. It uses only 8086
-instructions (`cpu 8086` is enforced) and 8087 instructions (no 287/387 ops like
-`FSIN` or `FSTSW AX`).
+![gameplay](docs/demo.gif)
 
-## Running
+| | |
+|---|---|
+| ![title](docs/title.png) | ![boss](docs/boss.png) |
+
+It is a single ~19 KB `.COM` file written in NASM assembly. It uses only 8086
+instructions (`cpu 8086` is enforced) and 8087 instructions, and requires an 8087.
+
+## Playing
 
 ```
 FLIGHT87.COM
 ```
 
-Requires: 8088/8086 (or anything later), an **8087** (it checks and refuses to run
-without one), CGA (or compatible), DOS 2+.
-
 | Key | Action |
 |---|---|
 | Arrows / WASD | fly |
-| Space / Ctrl | fire |
-| P | toggle CGA palette (cyan/magenta ↔ green/red) |
-| Esc | quit |
+| Space / Ctrl | fire. Lasers inherit your sideways motion, so you aim by steering. The reticle shows where they will be. |
+| Z / X | dodge roll left / right. Enemy bullets bounce off while you roll. |
+| B | bomb: destroys every fighter and bullet on screen and damages the boss |
+| P | pause |
+| C | switch CGA palette |
+| M | sound on/off |
+| F | frame-rate counter |
+| Esc | back to the title screen / quit |
 
-With no input it runs in an attract mode with an autopilot.
+Game rules:
+- You have a shield bar and 3 ships.
+- Obstacles, enemy craft and bullets drain the shield. Crystals restore it.
+- Pillars, pyramids, columns and gates are solid; cubes, octahedra and other
+  floating shapes can be shot.
+- The boss's core is armoured until both of its cannons are destroyed.
+- Clearing a stage awards a shield bonus and an extra bomb, then the next loop
+  starts, harder and in a different palette.
+- With no input, the title screen plays an attract-mode demo.
 
-In DOSBox use `machine=cga`. Note that DOSBox does not model 8087 timing, so FPU
-instructions are almost free there; the FPS you see in DOSBox is optimistic.
+In DOSBox use `machine=cga`. DOSBox does not model 8087 timing (FPU
+instructions are nearly free there), so real hardware is much slower than
+DOSBox suggests. See *Performance*.
 
 ## Building
 
@@ -37,65 +54,96 @@ instructions are almost free there; the FPS you see in DOSBox is optimistic.
 ./build.sh
 ```
 
-Needs `python3` (generates the sine table, dither patterns and models into
-`src/data.inc`) and `nasm`.
+Needs `python3` and `nasm`. `tools/gen_data.py` generates `src/data.inc`, which
+holds the sine table, the dither ramps and all the 3D models, including their
+face normals.
 
-## How the 8087 is used
+Debug builds:
 
-The 8087 is not much faster than the 8088 at any single multiply or divide
-(both take roughly 100–200 clocks). The demo gets its benefit in three ways.
+| Flag | Effect |
+|---|---|
+| `-DCOUNT` | 8087 instructions per frame on the HUD (with F) |
+| `-DGOD` | invulnerable |
+| `-DSTARTDIST=24100` | start part-way into the stage (24100 = just before the boss) |
+| `-DFRAGILE` | one ship, almost no shield |
 
-1. **All the 3D math runs on the 8087, in floating point.** That covers rotation
-   matrices from a float sine table, vertex transforms, back-face culling (the
-   camera is moved into object space, so each face costs one dot product), Lambert
-   shading, perspective divide, Sutherland–Hodgman clipping against the near
-   plane and screen edges in 3D, ship physics and the chase camera. There is no
-   fixed-point overflow juggling.
+Example: `./build.sh -DGOD -DSTARTDIST=24100`
+
+## How it works
+
+### The 8087 does the 3D math
+The 8087 is not much faster than the 8088 at a single multiply or divide (both
+take ~100–200 clocks). The game benefits from it in three ways.
+
+1. **All geometry is floating point on the 8087.** That covers:
+   - rotation matrices built from a float sine table
+   - vertex transforms
+   - back-face culling (the camera is moved into object space, so each face
+     costs one dot product)
+   - Lambert shading
+   - perspective divide
+   - Sutherland–Hodgman clipping in 3D
+   - ship physics and the chase camera
+   - enemy aiming: every bullet's direction is normalised with `FSQRT`
 2. **The two chips run in parallel.** The 8088 has to `WAIT` before each 8087
-   instruction. Here every FPU mnemonic is a macro that emits `WAIT` + opcode,
-   as MASM used to do. Integer code placed between two FPU instructions
-   therefore runs while the 8087 is still busy. Three places use this on purpose:
-   - **Ground:** while the 8087 computes the next stripe boundary
-     (`y = H·FY / z`, an FDIV), the 8088 fills the current stripe's rows with
-     `REP STOSW`.
+   instruction. Every FPU mnemonic is a macro that emits `WAIT` + opcode (as MASM
+   used to do), so integer code placed between FPU instructions runs while the
+   8087 is still busy. Three places use this on purpose:
+   - **Ground:** while the 8087 computes the next stripe boundary (an FDIV), the
+     8088 fills the current stripe's rows.
    - **Vertices:** while the 8087 does vertex *i*'s perspective FDIV, the 8088
-     computes the screen outcode of vertex *i−1*.
-   - **Faces:** while the 8087 does a face's lighting, the 8088 marks which
-     vertices that face uses (vertices used only by back faces are never
-     transformed).
-3. **Each chip does the work it is good at.** The 8088 handles integer edge
-   walking, dithered span filling, the depth sort, collisions and the blit to
-   CGA memory.
+     computes vertex *i−1*'s screen outcode.
+   - **Faces:** while the 8087 does a face's lighting, the 8088 marks the
+     vertices that face uses. Vertices used only by back faces are never
+     transformed.
+3. **The 8088 handles the integer work:** edge walking, dithered spans,
+   sorting, collisions, game logic and the blit to CGA memory.
 
-Other details:
-- Ordered 2×2 dithering turns the 4 CGA colours into 7-level shading ramps.
-- The background colour register is the sky, and flashes red when you crash.
-- Objects are depth-sorted (painter's algorithm). Convex objects need no
-  per-face sort; the ship and the arches sort their faces.
-- The PIT runs at 145.6 Hz (chaining the BIOS every 8th tick), so movement is
-  frame-rate independent.
-- Floats are compared with integer instructions on their bit patterns where
-  possible, because the 8087 has no `FSTSW AX` and reading flags costs a
-  memory round-trip.
+### Engine
+- 2×2 ordered dithering turns CGA's 4 colours into 7-level shading ramps.
+- Painter's algorithm. Objects are depth sorted; convex objects need no
+  per-face sort; the ship, the gates and other non-convex models sort their faces.
+- The ground is drawn as world-space stripes with distance fog. Only the ~12
+  rows where a stripe boundary lands are computed.
+- A 48-entity pool holds obstacles, enemies, bullets, lasers, pickups and boss
+  parts. Each has a velocity, an AI routine, hit points and timers. Debris
+  particles are a separate pool.
+- The stage is an event script keyed on distance flown. Events set obstacle
+  fields, spawn enemy waves and pickups, show messages and start the boss.
+- The timer runs at 145.6 Hz. Its interrupt chains to the BIOS every 8th tick
+  and plays PC speaker effects from tables: one PIT divisor or a noise entry
+  per tick.
+- Keyboard presses are latched in the keyboard interrupt, so a quick tap is
+  never lost, even at a low frame rate.
 
 ## Performance
 
-`./build.sh -DCOUNT` shows the number of 8087 instructions executed per frame
-on the HUD. A typical busy frame runs about 6,000–7,000.
+Build with `-DCOUNT` and press F to see the number of 8087 instructions per frame.
 
-At roughly 100–120 clocks per 8087 instruction on a 4.77 MHz machine
-(execution plus `WAIT` plus 8-bit bus fetches), the math takes ~0.15 s per
-frame. Filling, blitting and logic add roughly another 0.1 s. That gives an
-**estimated 3–5 fps on a stock IBM PC/XT**, and more on a turbo XT with an
-8087-2. These numbers are estimates and have not been measured on real
-hardware. Measurements (86Box/PCem with an 8087, or a real machine) are welcome.
+| Scene | 8087 instructions per frame |
+|---|---|
+| Quiet sections | ~4,000–6,000 |
+| Busy fights | ~8,000–12,000 |
+
+At roughly 100–120 clocks each on a 4.77 MHz 8087, plus filling and blitting,
+that works out to an **estimated 3–5 fps on a stock IBM PC/XT**. A turbo XT
+with an 8087-2 should do noticeably better. These numbers are estimates and
+have not been measured on real hardware. Measurements from 86Box/PCem with an
+8087, or from a real machine, are welcome.
 
 ## Layout
 
 ```
-src/flight.asm      the program
-src/data.inc        generated tables + models (do not edit)
-tools/gen_data.py   generator: sine table, dither ramps, models, face normals
-build.sh            build script
-FLIGHT87.COM        prebuilt binary
+src/flight.asm    main: constants, main loop, rendering order, data, variables
+src/fpu.inc       8087 WAIT-wrapper macros and helpers
+src/system.inc    FPU detection, timer/keyboard interrupts, sound, random, timing
+src/engine.inc    3D engine: ground, transform, culling, clipping, rasterizer, blit
+src/sprites.inc   lasers, bullets, particles, rectangles, reticle
+src/game.inc      game states, player, enemies and AI, script, collisions
+src/hud.inc       text (normal and double size), HUD, title screen
+src/stage.inc     stage script, obstacle sets, sound effects, strings
+src/data.inc      generated tables and models (do not edit)
+tools/gen_data.py generator for data.inc
+build.sh          build script
+FLIGHT87.COM      prebuilt binary
 ```

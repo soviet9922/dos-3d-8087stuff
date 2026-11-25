@@ -115,6 +115,7 @@ class Model:
         self.faces = []  # (indices, normal, ramp)
         self.ground = ground
         self.sort = sort
+        self.arch = False
 
     def add_pts(self, pts):
         base = len(self.pts)
@@ -172,16 +173,38 @@ def build_models():
     m = Model("TETRA")
     m.hull([(30, 30, 30), (-30, -30, 30), (-30, 30, -30), (30, -30, -30)], None)
     models.append(m)
-    m = Model("ARCHTOP", ground=True)  # floating slab on two legs = 3 hulls -> sort
+    m = Model("ARCHTOP", ground=True)  # slab on two legs = 3 hulls -> sort
     m.sort = True
+    m.arch = True                       # fly-through gap: special collision
     m.hull([(x - 40, y, z) for x, y, z in box(9, 45, 9, y0=0)], None)
     m.hull([(x + 40, y, z) for x, y, z in box(9, 45, 9, y0=0)], None)
     m.hull(box(58, 9, 12, y0=90), None)
     models.append(m)
 
-    b = Model("BOLT")
-    b.hull([(3, 0, 0), (-3, 0, 0), (0, 3, 0), (0, -3, 0), (0, 0, 16), (0, 0, -16)], "FLASH")
-    models.append(b)
+    # ---- enemies (they face the player: nose toward -z)
+    m = Model("DART")                       # small fighter
+    m.hull([(0, 0, -31), (-23, -1, 14), (23, -1, 14), (0, 10, 8), (0, -7, 11)], None)
+    models.append(m)
+    m = Model("SAUCER")                     # hovering gunship
+    ring = [(34 * math.cos(a), 0, 34 * math.sin(a)) for a in [i * math.pi / 3 + 0.5 for i in range(6)]]
+    m.hull(ring + [(0, 13, 0), (0, -8, 0)], None)
+    models.append(m)
+    m = Model("TURRET", ground=True)        # ground gun emplacement
+    m.hull([(x, 0, z) for x in (-16, 16) for z in (-16, 16)] +
+           [(x, 16, z) for x in (-9, 9) for z in (-9, 9)] + [(0, 24, -6)], None)
+    models.append(m)
+    m = Model("CORE")                       # boss body
+    m.hull([(r * math.cos(a), y, r * math.sin(a))
+            for r, y in ((40, 46), (78, 0), (40, -46))
+            for a in [i * math.pi / 3 + math.pi / 6 for i in range(6)]], None)
+    models.append(m)
+    m = Model("GUN")                        # boss arm cannon
+    m.hull([(x, y, z) for x in (-17, 17) for y in (-17, 17) for z in (-32, 24)] +
+           [(0, 0, -56)], None)
+    models.append(m)
+    m = Model("CRYSTAL")                    # shield pickup
+    m.hull([(11, 0, 0), (-11, 0, 0), (0, 0, 11), (0, 0, -11), (0, 20, 0), (0, -20, 0)], None)
+    models.append(m)
     return models
 
 
@@ -231,7 +254,7 @@ def main():
         cy = (min(ys) + max(ys)) / 2
         hx = max(abs(x) for x in xs); hz = max(abs(z) for z in zs); hy = (max(ys) - min(ys)) / 2
         rad = max(math.sqrt(p[0] ** 2 + (p[1] - cy) ** 2 + p[2] ** 2) for p in m.pts)
-        flags = (1 if m.ground else 0) | (2 if m.sort else 0)
+        flags = (1 if m.ground else 0) | (2 if m.sort else 0) | (4 if m.arch else 0)
         L.append("model_%s:" % m.name.lower())
         L.append("  dw %d, %d, %d  ; nverts nfaces flags" % (len(m.pts), len(m.faces), flags))
         # radius is around the centre (y offset cy)

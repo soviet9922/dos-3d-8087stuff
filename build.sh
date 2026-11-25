@@ -2,7 +2,9 @@
 # Regenerate tables/models and assemble FLIGHT87.COM
 #   ./build.sh            normal build
 #   ./build.sh -DCOUNT    show 8087 instructions per frame on the HUD
-#   ./build.sh -DNOOBS    no obstacles (debug)
+#   ./build.sh -DGOD      invulnerable (testing)
+#   ./build.sh -DSTARTDIST=24100   start a game just before the boss
+#   ./build.sh -DFRAGILE  one ship, almost no shield (testing game over)
 set -e
 cd "$(dirname "$0")"
 python3 tools/gen_data.py
